@@ -1,0 +1,492 @@
+---
+title: "MovieLens Project"
+author: "Biljana Novkovic"
+date: "3/14/2023"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## INTRODUCTION
+
+Movies are an important part of our modern-day lives. They entertain us, help us escape reality, take us on adventures and make us think. Movies can even change the way we view the world. We used to watch movies in the cinemas, then on our TVs, and nowadays we watch them mainly on various streaming services. This means that we can watch them on demand, and we can pick from thousands of movies at any point in time. But how do we choose what to watch next? 
+
+Websites such as IMDB and Rotten Tomatoes aggregate critic and user scores. However, they do not account for the fact that different people have different tastes. This is where machine learning algorithms come into play. 
+
+The goal of this project was to create a predictive algorithm that can recommend movies to users based on the MovieLens data set. This dataset has over 9 million ratings by over 69,000 users for over 10,000 movies. In this project, we will split this dataset into a working dataset and the dataset we will use for final evaluation. Using our working dataset, we will look for variables that may help us predict user ratings more accurately. Then we will build and evaluate models based on these variables. Finally, we will pick the most predictive model and evaluate it on our final evaluation dataset.
+
+## ANALYSIS
+## Exploring the Dataset 
+
+The MovieLens datasets and initial code were provided by the course. We will use the edx dataset provided for data exploration and model training and testing. We will use the final holdout test set to test our best model as the final step in this project. 
+
+```{r data, include=FALSE}
+library(tidyverse)
+library(caret)
+library(ggplot2)
+library(dplyr)
+download.file("https://www.dropbox.com/s/4t4w48ut2gu8dn6/edx.rds?dl=1", "edx.rds")
+download.file("https://www.dropbox.com/s/c4jzznttgc01sdb/final_holdout_test.rds?dl=1", "final_holdout_test.rds")
+
+edx = readRDS("edx.rds")
+final_holdout_test = readRDS("final_holdout_test.rds")
+```
+
+```{r summary, echo=FALSE}
+head(edx) %>% knitr::kable()
+edx %>% summarize(users = n_distinct(userId), movies = n_distinct(movieId), nrows = nrow(edx)) %>%
+knitr::kable()
+```
+
+Our dataset is a table with the following columns: (1) userId, (2) movieId, (3) rating, (4) timestamp, (5) title and (6) genres. It has 9,000,055 rows. From the first two columns, we can see that this dataset has 69,878 distinct users and 10,677 distinct movies. 
+
+## Distribution of Ratings
+
+Next, let's explore the general distribution of ratings in this dataset.
+
+```{r rangeaverage, echo=FALSE}
+edx %>% summarize(average_rating = mean(rating)) %>% knitr::kable()
+```
+
+```{r ratingdistribution, echo=FALSE}
+fig1<- edx %>% ggplot(aes(rating)) +
+  geom_histogram(aes(fill = as.factor(rating)), binwidth = 0.5, color = "black") +
+  theme(legend.title = element_blank()) +
+  guides(fill = guide_legend(reverse = TRUE))
+
+fig1 + ggtitle ("Movie Ratings") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+    	panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  scale_x_continuous(name = "Rating", breaks=seq(0,5,0.5)) +
+  scale_y_continuous(name = "Number of ratings", breaks=seq(0,3000000,500000)) +
+  coord_flip()
+```
+
+The average rating is around 3.5 stars. From the figure above, we can see that 4 stars is the most common rating given to a movie, with over 2.5 million ratings, followed by 3 and then 5 stars. Relatively fewer movies are rated with 0.5, 1 and 1.5 stars. Because there is no rating of 0 stars, we can assume that 0 stars was not an option available to users in this database. 
+
+\newpage
+
+## Movies
+
+Let's look at the number of ratings for each movie. Are they more or less evenly distributed?
+
+```{r movierating, echo=FALSE, out.width = '80%'}
+fig2<- edx %>% group_by(movieId) %>%
+  summarize(n= n()) %>%
+  ggplot(aes(x = movieId, y = n)) + geom_line(color = "deepskyblue2")
+
+fig2 + ggtitle ("Ratings per Movie") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+    	panel.background = element_blank()) +
+  scale_x_continuous(name = "Movie ID") +
+  scale_y_continuous(name = "Number of Ratings")
+```
+ 
+We can see that there are a number of movies that receive a lot of ratings, some over 30,000 which is about half of the users in this dataset. The majority of movies, however, have less than 5,000 reviews, and many have far fewer than that.  
+
+```{r movierating2, echo = FALSE, out.width = '80%'}
+fig3<- edx %>% group_by(movieId) %>%
+  summarize(n= n()) %>%
+  ggplot(aes(x = n)) + geom_histogram(color = "deepskyblue4",fill = "deepskyblue2", binwidth = 1000)
+
+fig3 + ggtitle ("Ratings per Movie") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+    	panel.background = element_blank()) +
+  scale_x_continuous(name = "Number of Ratings") +
+  scale_y_continuous(name = "Movies")
+```
+
+When we look at the distribution of reviews per movie, we can see that almost 8,000 movies out of our total 10,677 have less than a thousand reviews.
+
+Let's look at the most and least reviewed movies.
+
+```{r mostleastrated, echo = FALSE, warning = FALSE, message = FALSE}
+most_rated <- edx %>% group_by(movieId, title) %>%
+  summarize(reviews = n()) %>% arrange(desc(reviews))
+head(most_rated, n=10) %>% knitr::kable()
+
+least_rated <- edx %>% group_by(movieId, title) %>%
+  summarize(reviews = n()) %>% arrange(reviews)
+head(least_rated, n=10) %>% knitr::kable()
+```
+
+We can see that the most reviewed movies are large blockbusters such as: Pulp Fiction, Forrest Gump and The Silence of the Lambs. Each of these 3 movies has over 30,000 reviews. The least reviewed movies have only a single review and include some pretty obscure entries.
+
+What is the distribution of reviews between movies? 
+```{r movieratings3, echo = FALSE, out.width = '80%'}
+
+fig4 <- edx %>% group_by(movieId) %>% summarize(avg= mean(rating)) %>%
+  ggplot(aes(avg)) + geom_histogram(color = "deepskyblue4", fill = "deepskyblue2", binwidth = 0.5)
+
+fig4 + ggtitle ("Average Movie Ratings") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+    	panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  scale_x_continuous(name = "Average Rating", breaks=seq(0,5,0.5)) +
+  scale_y_continuous(name = "Number of movies")
+```
+
+We can see that a lot of movies get 3 and 3.5 stars on average. Movies with less than 2 and more than 4 stars are relatively uncommon.
+
+## Users
+
+Now let's look at the users. Are some users rating way more movies than others?
+
+```{r userratings, echo = FALSE, out.width = '80%'}
+fig5<- edx %>% group_by(userId) %>%
+  summarize(n= n()) %>%
+  ggplot(aes(x = n)) + geom_histogram(color = "deepskyblue4",fill = "deepskyblue2", binwidth = 100)
+
+fig5 + ggtitle ("Ratings per User") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+    	panel.background = element_blank()) +
+  scale_x_continuous(name = "Ratings", breaks=seq(0,6500,1000)) +
+  scale_y_continuous(name = "Number of Users")
+```
+ 
+The majority of users have rated less than 200 movies. In fact, almost half of the users have rated a 100 movies or less.
+ 
+How about user bias? Are some users more likely to review movies favorably than others?
+
+```{r userbias, echo = FALSE, out.width = '80%'}
+fig6<- edx %>% group_by(userId) %>% summarize(avg= mean(rating)) %>%
+  ggplot(aes(avg)) + geom_histogram(color = "deepskyblue4", fill = "deepskyblue2", binwidth = 0.5)
+
+fig6 + ggtitle ("Average User Ratings") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+    	panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  scale_x_continuous(name = "Average Rating", breaks=seq(0,5,0.5)) +
+  scale_y_continuous(name = "Number of users")
+```
+ 
+We can see that many users have a review average of about 3.5. Users that rate movies very favorably (average of 4.5 or 5) or unfavorably (average of 2.5 or below) are less common, but they do exist.
+
+## Genres
+
+Next, let's look at the genres. There are 18 genres in the edx dataset. One movie doesn't have a genre, and several are classified as IMAX, which we will ignore for this analysis.
+
+```{r genres, echo = FALSE}
+genres <- edx %>% #separating genres in the genres column
+  separate_rows(genres, sep = "\\|")
+
+genres %>%
+  group_by(genres) %>%
+  distinct(movieId) %>% #accounting for multiple ratings for the same movie
+  summarise(n = n()) %>%
+  arrange(desc(n))
+```
+
+Dramas are the most common. Over 5,000 movies, about half in this database, have been classified as dramas. Comedy is the next common genre, followed by thriller, romance and action. Film-noir is the least represented genre, followed by western and animation.
+
+```{r genreavg, echo = FALSE}
+genres %>%
+  group_by(genres) %>%
+  summarise(average = mean(rating)) %>%
+  arrange(desc(average))
+```
+
+Different genres have different rating averages. For example, film-noir, documentaries and war movies have the highest average ratings (4.01, 3.78 and 3.78), while childrens' movies, sci-fi and horror movies have the lower ratings (3.42, 3.4 and 3.27).
+
+
+\newpage
+## Year of Release
+Finally, let's look at the year of release. Do people tend to prefer newer or older movies?
+
+```{r years, echo = FALSE, out.width = '80%'}
+# separating the title and the year from the "title" column
+year <- edx%>%
+  extract(title, c("just_title", "year"), regex = "^(.*) \\(([0-9 \\-]*)\\)$", remove = F)
+year$year = as.numeric(year$year)
+
+fig7<- year %>% group_by(year) %>% summarize(avg= mean(rating)) %>%
+  ggplot(aes(year,avg)) + geom_line(color = "deepskyblue4")
+
+fig7 + ggtitle ("Average Rating per Year") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+    	panel.background = element_blank()) +
+  scale_x_continuous(name = "Release Year", breaks=seq(1900,2012,10)) +
+  scale_y_continuous(name = "Average Rating")
+```
+
+Somewhat surprisingly, newer movies tend to have lower ratings. In fact, movie ratings are higher than average for the majority of the years up to mid 80s, when ratings seem to drop. But is there bias in the data?  Likely, a much higher number of users only watch and review newer movies. 
+
+```{r yearbias, echo = FALSE, out.width = '80%'}
+fig8<- year %>% group_by(year) %>% summarize(n= n()) %>%
+  ggplot(aes(year,n)) + geom_line(color = "deepskyblue2")
+
+fig8 + ggtitle ("Number of Ratings per Year") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+    	panel.background = element_blank()) +
+  scale_x_continuous(name = "Release Year", breaks=seq(1900,2012,10)) +
+  scale_y_continuous(name = "Number of Ratings", breaks=seq(0,800000,50000))
+
+year %>% group_by(year) %>% summarize(n= n()) %>% arrange(desc(n)) %>% head(., 10) %>% knitr::kable()
+
+```
+
+Indeed, we can observe an increase in reviews throughout the 70s and 80s, with a sharp increase and peak in the mid 90s. The top 7 most reviewed movies are from the 90s. People who seek out older movies may be more likely to be cinefiles, and may tend to rate those movies higher. Let's check if that is true by taking the 100 users with the most reviews and the 100 users with the least reviews, and by checking the year of release of the movies they tend to rate.
+
+```{r topbottom100, echo = FALSE}
+#extracting the top 100 most prolific raters
+top100 <- year %>% group_by(userId) %>% summarise(n = n()) %>%
+  arrange(desc(n)) %>% head(., 100)
+top100<- top100$userId
+top100years<- year %>% filter(userId %in% top100)
+top100years$Reviewers <- "Top 100"
+
+#extracting the 100 users with the least movie ratings
+bottom100 <- year %>% group_by(userId) %>% summarise(n = n()) %>%
+  arrange(n) %>% head(., 100)
+bottom100<- bottom100$userId
+bottom100years<- year %>% filter(userId %in% bottom100)
+bottom100years$Reviewers <- "Bottom 100"
+
+top_bottom <- rbind(top100years, bottom100years) #joining both datasets
+
+fig9<- top_bottom %>%
+  ggplot(aes(year,userId)) + geom_point(aes(color = Reviewers)) +
+  theme(axis.text.y=element_blank(),
+    	axis.ticks.y=element_blank(),
+    	axis.title.y = element_blank())
+
+fig9 + ggtitle ("Number of User Ratings by Year of Release") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+    	panel.background = element_blank()) +
+  scale_x_continuous(name = element_blank(), breaks=seq(1900,2012,10))
+
+fig10<- top_bottom %>%
+  ggplot(aes(Reviewers, year)) + geom_point(aes(color = Reviewers)) + geom_boxplot(aes(color = Reviewers))
+
+fig10 + ggtitle ("Number of User Ratings by Year of Release") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_y_continuous(name = element_blank(), breaks=seq(1900,2012,10))
+```
+
+We can definitely see that the users with least reviews tend to review more recent movies, peaking in the 90s, while the most prolific reviewers in our dataset tend to review movies across various decades.
+
+\newpage
+
+## RESULTS
+
+First, we need to partition the dataset into a train and test set, and make sure they both look at the same movies and have the same user pool. We assign 80% of the data to the train and 20% to the test set. We also define the residual means squared error (RMSE), that we will use to evaluate our models, as RMSE = sqrt(mean((true_ratings - predicted_ratings)^2).
+
+```{r partition, echo = FALSE, warning = FALSE, message = FALSE}
+#partitioning the dataset into training (80%) and test set (20%)
+set.seed(84, sample.kind="Rounding")
+test_index <- createDataPartition(y = edx$rating, times = 1, p = 0.2, list = FALSE)
+train_set <- edx[-test_index,]
+test_set <- edx[test_index,]
+
+test_set <- test_set %>%
+  semi_join(train_set, by = "movieId") %>%
+  semi_join(train_set, by = "userId")
+
+RMSE <- function(true_ratings, predicted_ratings){
+  sqrt(mean((true_ratings - predicted_ratings)^2))
+}
+```
+
+## The Simplest Model
+
+Let's start with the simplest of all models, where we always predict the average rating.
+
+```{r justaverage, echo = FALSE}
+average <- mean(train_set$rating)
+naive_rmse <- RMSE(test_set$rating, average)
+rmse_results <- tibble(method = "Average Rating", RMSE = naive_rmse)
+rmse_results %>% knitr::kable()
+```
+
+We can see that this model has an RMSE of about 1.06. We can do better than that.
+ 
+## The Movie Effect
+Next, we will take into account that different movies have different average ratings. Not all movies are great. Good movies are more likely to have higher reviews and bad movies are more likely to have lower reviews.
+
+```{r movieeffect, echo = FALSE}
+
+movie_avgs <- train_set %>%
+  group_by(movieId) %>%
+  summarize(me = mean(rating - average)) #average rating for each movie
+
+predicted_ratings <- average + test_set %>%
+  left_join(movie_avgs, by='movieId') %>%
+  .$me
+
+movie_effect <- RMSE(predicted_ratings, test_set$rating)
+rmse_results <- bind_rows(rmse_results,
+                      	tibble(method="Movie Effect Model",
+                                 	RMSE = movie_effect ))
+rmse_results %>% knitr::kable()
+```
+
+Factoring in the "movie effect" improves our prediction from an RMSE of about 1.06 to 0.943. How about the genre of the movie? We've seen that some genres tend to get more favorable ratings than others.
+
+## The Movie + Genre Effect
+To evaluate if adding the information about genre can help improve our prediction, let's add it to our previous model. For computational efficiency, we will use the combinations of genres available in the genre column.
+
+```{r genreeffect, echo = FALSE}
+genre_avgs <- train_set %>%
+  left_join(movie_avgs, by='movieId') %>%
+  group_by(genres) %>%
+  summarize(ge = mean(rating - average - me))
+
+predicted_ratings <- test_set %>%
+  left_join(movie_avgs, by='movieId') %>%
+  left_join(genre_avgs, by = "genres") %>%
+  mutate(pred = average + me + + ge) %>%
+  .$pred
+
+genre_effect <- RMSE(predicted_ratings, test_set$rating)
+rmse_results <- bind_rows(rmse_results,
+                      	tibble(method="Movie + Genre Effects Model",  
+                             	RMSE = genre_effect))
+rmse_results %>% knitr::kable()
+```
+
+Information about movie genres does not seem to improve our prediction compared to the previous model that only included movie information.
+
+## The Movie + User Effect
+
+Let's check what happens when we adjust for different user biases in addition to movie biases. 
+
+```{r usereffect, echo = FALSE}
+user_avgs <- train_set %>%
+  left_join(movie_avgs, by='movieId') %>%
+  group_by(userId) %>%
+  summarize(ue = mean(rating - average - me))
+
+predicted_ratings <- test_set %>%
+  left_join(movie_avgs, by='movieId') %>%
+  left_join(user_avgs, by='userId') %>%
+  mutate(pred = average + me + ue) %>%
+  .$pred
+
+user_effect <- RMSE(predicted_ratings, test_set$rating)
+rmse_results <- bind_rows(rmse_results,
+                      	tibble(method="Movie + User Effects Model",  
+                                 	RMSE = user_effect))
+rmse_results %>% knitr::kable()
+```
+
+Adding user information improves our prediction from an RMSE of about 0.943 to 0.866.
+
+## The Movie + User + Year Effect
+
+Next, let's check if adding the year of release to the previous model improves our prediction.
+
+```{r yeareffect, echo = FALSE}
+train_set <- train_set %>%
+  extract(title, c("just_title", "year"), regex = "^(.*) \\(([0-9 \\-]*)\\)$", remove = F)
+train_set$year = as.numeric(train_set$year)
+
+test_set <- test_set %>%
+  extract(title, c("just_title", "year"), regex = "^(.*) \\(([0-9 \\-]*)\\)$", remove = F)
+test_set$year = as.numeric(test_set$year)
+
+year_avgs <- train_set %>%
+  left_join(movie_avgs, by='movieId') %>%
+  left_join(user_avgs, by='userId') %>%
+  group_by(year) %>%
+  summarize(ye = mean(rating - average - me - ue))
+
+predicted_ratings <- test_set %>%
+  left_join(movie_avgs, by='movieId') %>%
+  left_join(user_avgs, by='userId') %>%
+  left_join(year_avgs, by='year') %>%
+  mutate(pred = average + me + ue + ye) %>%
+  .$pred
+
+year_effect <- RMSE(predicted_ratings, test_set$rating)
+rmse_results <- bind_rows(rmse_results,
+                      	tibble(method="Movie + User + Year Effects Model",  
+                                 	RMSE = year_effect))
+rmse_results %>% knitr::kable()
+```
+
+Information about the release year of the movie does not seem to further improve our model.
+
+## Model Regularization
+
+The best model we have trained so far may still suffer from biases. For example, our best and worst reviewed movies seem to be really obscure movies with few ratings. 
+
+```{r ratingbias, echo = FALSE, warning = FALSE, message = FALSE}
+best_rated <- train_set %>% group_by(movieId, title) %>%
+  summarize(avg_rating = mean(rating)) %>% arrange(desc(avg_rating))
+head(best_rated, n=10) %>% knitr::kable()
+tail(best_rated, n=10) %>% knitr::kable()
+```
+
+We need to account for this bias by constraining the total variability of the effect sizes. We can do that by penalizing larger or smaller estimates that come from small sample sizes. Let's add a tuning parameter lambda, that shrinks the estimates that are outliers.
+
+```{r tuning, echo = FALSE}
+lambdas <- seq(0, 10, 0.25)
+regular <- sapply(lambdas, function(l){
+  avg <- average
+  me <- train_set %>%
+	group_by(movieId) %>%
+	summarize(me = sum(rating - avg)/(n()+l))
+  ue <- train_set %>%
+	left_join(me, by="movieId") %>%
+	group_by(userId) %>%
+	summarize(ue = sum(rating - me - avg)/(n()+l))
+  predicted_ratings <-
+	test_set %>%
+	left_join(me, by = "movieId") %>%
+	left_join(ue, by = "userId") %>%
+	mutate(pred = avg + me + ue) %>%
+	.$pred
+  return(RMSE(predicted_ratings, test_set$rating))
+})
+
+qplot(lambdas, regular)  
+lambda <- lambdas[which.min(regular)]
+
+rmse_results <- bind_rows(rmse_results,
+                      	tibble(method="Regularized Movie + User Effect Model",  
+                             	RMSE = min(regular)))
+rmse_results %>% knitr::kable()
+```
+
+We can see that lambda = 5 is the best tuning parameter for this model. In addition, regularization improves the results slightly, from  RMSE of about 0.866 to 0.865.
+
+## Final Test
+
+We will use the final holdout dataset to test our best model, which is the regularized model with movie and user effects.
+
+```{r finaltest, echo = FALSE}
+# retraining the model on the complete edx dataset as our train set
+avg <- mean(edx$rating)
+movie_effect <- edx %>%
+  group_by(movieId) %>%
+  summarize(movie_effect = sum(rating - avg)/(n()+5))
+user_effect <- edx %>%
+  left_join(movie_effect, by="movieId") %>%
+  group_by(userId) %>%
+  summarize(user_effect = sum(rating - movie_effect - avg)/(n()+5))
+
+#using the model above to predict ratings in the final holdout dataset
+predicted_ratings <-
+  final_holdout_test %>%
+  left_join(movie_effect, by = "movieId") %>%
+  left_join(user_effect, by = "userId") %>%
+  mutate(pred = avg + movie_effect + user_effect) %>%
+  .$pred
+
+final_test <- RMSE(predicted_ratings, final_holdout_test$rating)
+final_test_result <- tibble(method = "Final Regularized Movie + User Effect Model", RMSE = final_test) 
+final_test_result %>% knitr::kable()
+```
+
+## CONCLUSION
+
+We have explored the MovieLens dataset, looking at the predictive power of different variables, including the movie, user, genre and year of release. The Regularized Movie + User Effect model was the best performing model, with a slight improvement over the second best unregularized Movie + User Effect model. Variables such as genre and year of release did not improve the predictive power of our model, likely because the information carried in these variables was redundant. In the future, this models can be further improved by employing more advanced machine learning models.
